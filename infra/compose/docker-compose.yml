@@ -1,0 +1,128 @@
+version: '3.9'
+
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: apps/api/Dockerfile
+    env_file:
+      - ../compose/.env.api  # скопируйте из .env.api.example
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgres://zemo:zemo@postgres:5432/zemo
+      REDIS_URL: redis://redis:6379/0
+      PHP_MORPHY_URL: http://phpmorphy:8080
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      phpmorphy:
+        condition: service_started
+    ports:
+      - '3000:3000'
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: apps/worker/Dockerfile
+    env_file:
+      - ../compose/.env.worker  # скопируйте из .env.worker.example
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://zemo:zemo@postgres:5432/zemo
+      REDIS_URL: redis://redis:6379/0
+      PHP_MORPHY_URL: http://phpmorphy:8080
+      JOBS_CONCURRENCY_SERP: '3'
+      JOBS_CONCURRENCY_SCRAPE: '2'
+      JOBS_CONCURRENCY_ANALYZE: '4'
+      JOBS_CONCURRENCY_GENERATE: '2'
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      phpmorphy:
+        condition: service_started
+    networks:
+      - backend
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: zemo
+      POSTGRES_USER: zemo
+      POSTGRES_PASSWORD: zemo
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./init-sql:/docker-entrypoint-initdb.d:ro
+    ports:
+      - '5432:5432'
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "zemo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    ports:
+      - '6379:6379'
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  phpmorphy:
+    image: zemo/phpmorphy:latest
+    restart: unless-stopped
+    networks:
+      - backend
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.105.0
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    networks:
+      - backend
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - '9090:9090'
+    networks:
+      - backend
+    depends_on:
+      - api
+      - worker
+
+networks:
+  backend:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:

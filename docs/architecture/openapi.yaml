@@ -1,0 +1,552 @@
+openapi: 3.0.3
+info:
+  title: Zemo Modular API
+  description: >-
+    Черновик OpenAPI-спецификации для новой модульной архитектуры Zemo. Все маршруты
+    требуют аутентификации (Bearer JWT), если не указано иное.
+  version: 0.1.0
+servers:
+  - url: https://api.zemo.local
+    description: Production
+  - url: https://staging-api.zemo.local
+    description: Staging
+security:
+  - bearerAuth: []
+tags:
+  - name: Health
+  - name: Jobs
+  - name: Settings
+  - name: Prompts
+  - name: Analytics
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Healthcheck сервиса
+      responses:
+        '200':
+          description: Сервис здоров
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Сервис не готов принимать трафик
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security: []
+  /api/jobs:
+    post:
+      tags: [Jobs]
+      summary: Создать задачу
+      description: >-
+        Создаёт новую задачу указанного типа и помещает её в очередь. Возвращает идентификатор задачи и её начальный статус.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobRequest'
+      responses:
+        '201':
+          description: Задача создана
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '400':
+          description: Невалидные параметры задачи
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          description: Превышен лимит запросов
+    get:
+      tags: [Jobs]
+      summary: Получить список задач пользователя
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/JobStatus'
+        - name: type
+          in: query
+          schema:
+            $ref: '#/components/schemas/JobType'
+      responses:
+        '200':
+          description: Список задач
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Job'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+  /api/jobs/{jobId}:
+    get:
+      tags: [Jobs]
+      summary: Получить статус задачи
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: Текущий статус задачи
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '404':
+          description: Задача не найдена
+  /api/jobs/{jobId}/logs:
+    get:
+      tags: [Jobs]
+      summary: Получить логи задачи
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          description: Курсор (UUID или timestamp) для пагинации
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+            maximum: 200
+      responses:
+        '200':
+          description: Пагинированные логи
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobLogsPage'
+        '404':
+          description: Задача не найдена
+  /api/jobs/{jobId}/logs/stream:
+    get:
+      tags: [Jobs]
+      summary: Поток логов задачи (SSE)
+      operationId: streamJobLogs
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: Stream событий
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE stream c событиями лога
+        '404':
+          description: Задача не найдена
+  /api/settings:
+    get:
+      tags: [Settings]
+      summary: Получить текущие настройки и секреты (замаскировано)
+      responses:
+        '200':
+          description: Настройки приложения
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settings'
+    put:
+      tags: [Settings]
+      summary: Обновить ключи провайдеров и настройки
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SettingsUpdate'
+      responses:
+        '200':
+          description: Обновлённые настройки
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settings'
+  /api/prompts:
+    get:
+      tags: [Prompts]
+      summary: Получить список промптов и их версии
+      responses:
+        '200':
+          description: Список промптов
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromptList'
+    put:
+      tags: [Prompts]
+      summary: Массово обновить промпты
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromptUpdateRequest'
+      responses:
+        '200':
+          description: Обновлённые промпты
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromptList'
+  /api/prompts/reset:
+    post:
+      tags: [Prompts]
+      summary: Сбросить промпты к версиям по умолчанию
+      responses:
+        '202':
+          description: Операция принята, выполнится асинхронно
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobId:
+                    type: string
+                    format: uuid
+  /api/analytics/preview-data:
+    get:
+      tags: [Analytics]
+      summary: Получить предпросмотр данных для промптов/отчётов
+      parameters:
+        - name: promptKey
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: range
+          in: query
+          schema:
+            type: string
+            enum: [day, week, month]
+            default: week
+      responses:
+        '200':
+          description: Предпросмотр данных
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreviewData'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    JobId:
+      name: jobId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        default: 1
+        minimum: 1
+    PerPage:
+      name: perPage
+      in: query
+      schema:
+        type: integer
+        default: 20
+        minimum: 1
+        maximum: 100
+  responses:
+    Unauthorized:
+      description: Требуется аутентификация
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        uptimeSeconds:
+          type: integer
+        dependencies:
+          type: object
+          additionalProperties:
+            type: string
+    JobRequest:
+      type: object
+      required: [type, params]
+      properties:
+        type:
+          $ref: '#/components/schemas/JobType'
+        params:
+          type: object
+          additionalProperties: true
+        priority:
+          type: string
+          enum: [low, normal, high]
+          default: normal
+    Job:
+      type: object
+      required:
+        - id
+        - type
+        - status
+        - progress
+        - queuedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/JobType'
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        payload:
+          type: object
+          additionalProperties: true
+        progress:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+        queuedAt:
+          type: string
+          format: date-time
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
+        finishedAt:
+          type: string
+          format: date-time
+          nullable: true
+        ownerId:
+          type: string
+          format: uuid
+        lastLogAt:
+          type: string
+          format: date-time
+          nullable: true
+    JobLogsPage:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobLog'
+        nextCursor:
+          type: string
+          nullable: true
+    JobLog:
+      type: object
+      required: [id, jobId, level, message, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        jobId:
+          type: string
+          format: uuid
+        level:
+          type: string
+          enum: [debug, info, warn, error]
+        step:
+          type: string
+        message:
+          type: string
+        context:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+    Settings:
+      type: object
+      properties:
+        serpApi:
+          $ref: '#/components/schemas/ProviderSetting'
+        llmProviders:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProviderSetting'
+        puppeteer:
+          type: object
+          properties:
+            concurrency:
+              type: integer
+            timeoutSeconds:
+              type: integer
+        updatedAt:
+          type: string
+          format: date-time
+    SettingsUpdate:
+      type: object
+      properties:
+        serpApi:
+          $ref: '#/components/schemas/ProviderSettingInput'
+        llmProviders:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProviderSettingInput'
+        puppeteer:
+          type: object
+          properties:
+            concurrency:
+              type: integer
+            timeoutSeconds:
+              type: integer
+    ProviderSetting:
+      type: object
+      properties:
+        provider:
+          type: string
+        keyMasked:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+        rotatedAt:
+          type: string
+          format: date-time
+          nullable: true
+    ProviderSettingInput:
+      type: object
+      required: [provider, key]
+      properties:
+        provider:
+          type: string
+        key:
+          type: string
+          description: Значение API ключа (plaintext)
+        metadata:
+          type: object
+          additionalProperties: true
+    PromptList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Prompt'
+    Prompt:
+      type: object
+      required: [key, body, version, updatedAt]
+      properties:
+        key:
+          type: string
+        body:
+          type: string
+        version:
+          type: integer
+        updatedBy:
+          type: string
+          format: uuid
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+    PromptUpdateRequest:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            required: [key, body]
+            properties:
+              key:
+                type: string
+              body:
+                type: string
+              note:
+                type: string
+    PreviewData:
+      type: object
+      properties:
+        promptKey:
+          type: string
+        sampleSize:
+          type: integer
+        generatedTexts:
+          type: array
+          items:
+            type: object
+            properties:
+              heading:
+                type: string
+              score:
+                type: number
+              keywordsUsed:
+                type: array
+                items:
+                  type: string
+        serpSnapshots:
+          type: array
+          items:
+            type: object
+            properties:
+              keyword:
+                type: string
+              totalResults:
+                type: integer
+              fetchedAt:
+                type: string
+                format: date-time
+        analytics:
+          type: object
+          properties:
+            completionRate:
+              type: number
+            avgTokens:
+              type: number
+            avgLatencySeconds:
+              type: number
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+        perPage:
+          type: integer
+        total:
+          type: integer
+    JobStatus:
+      type: string
+      enum: [queued, running, success, failed, cancelled]
+    JobType:
+      type: string
+      enum: [serpapi, scrape, analyze, generate, pipeline]
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
