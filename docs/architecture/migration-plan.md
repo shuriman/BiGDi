@@ -1,80 +1,117 @@
-# План миграции и отката
+# Migration and Rollback Plan
 
-Документ описывает последовательный переход от существующего монолита Zemo на модульную архитектуру.
+This document describes the sequential transition from the existing Zemo monolith to the modular architecture.
 
-## Фазы миграции
+## Migration Phases
 
-### Фаза 0 — Подготовка
-- Утвердить ADR и архитектурные артефакты.
-- Создать репозиторий и структуру каталогов (текущий шаг).
-- Настроить общие практики (CI, линтеры, форматтеры, pre-commit).
+### Phase 0 - Preparation
+- [x] Approve ADR and architectural artifacts.
+- [x] Create repository and directory structure (current step).
+- [ ] Set up common practices (CI, linters, formatters, pre-commit).
+- [ ] Configure development environment and tooling.
 
-### Фаза 1 — Инфраструктурный фундамент
-1. Развернуть обновлённый `docker-compose` (PostgreSQL, Redis, phpmorphy) на staging.
-2. Настроить бэкапы PostgreSQL + мониторинг (Prometheus/Grafana).
-3. Включить `pgcrypto`, `pgvector`, `uuid-ossp`.
-4. Подготовить шаблон `.env` и секреты (Docker secrets/Vault).
+### Phase 1 - Infrastructure Foundation
+1. Deploy updated `docker-compose` (PostgreSQL, Redis, phpmorphy) on staging.
+2. Set up PostgreSQL backups + monitoring (Prometheus/Grafana).
+3. Enable `pgcrypto`, `pgvector`, `uuid-ossp` extensions.
+4. Prepare `.env` template and secrets (Docker secrets/Vault).
+5. Set up OpenTelemetry collector and monitoring dashboards.
 
-### Фаза 2 — Данные и миграции
-1. Сконвертировать существующие SQLite схемы в Prisma schema.
-2. Сгенерировать и применить initial миграции в новой БД.
-3. Реализовать ETL-пайплайн для переноса исторических данных (SQLite → PostgreSQL) — отдельный временный worker.
-4. Ввести режим двойной записи в монолите и валидировать целостность данных.
+### Phase 2 - Data and Migrations
+1. Convert existing SQLite schemas to Prisma schema.
+2. Generate and apply initial migrations to new database.
+3. Implement ETL pipeline for historical data migration (SQLite → PostgreSQL) — separate temporary worker.
+4. Introduce dual-write mode in monolith and validate data integrity.
+5. Set up data validation and comparison scripts.
 
-### Фаза 3 — API сервис
-1. Реализовать NestJS API (`apps/api`):
-   - identity, settings, prompts, jobs, analytics модули.
-   - SSR-шаблоны (минимальные страницы dashboard, список задач, просмотр логов).
-   - Swagger/OpenAPI генерация.
-   - Логирование Pino + requestId.
-2. Подключить Redis для постановки задач, организовать rate limiting.
-3. Настроить Socket.IO/SSE гейтвей для стрима логов задач.
-4. Ввести feature flag, позволяющий переключать клиентов с монолита на новый API.
+### Phase 3 - API Service
+1. Implement NestJS API (`apps/api`):
+   - Identity, settings, prompts, jobs, analytics modules.
+   - SSR templates (minimal pages: dashboard, job list, log viewing).
+   - Swagger/OpenAPI generation.
+   - Pino logging + requestId correlation.
+2. Connect Redis for job queuing, implement rate limiting.
+3. Set up Socket.IO/SSE gateway for job log streaming.
+4. Introduce feature flag to switch clients from monolith to new API.
+5. Implement health checks and metrics endpoints.
 
-### Фаза 4 — Worker сервис
-1. Реализовать BullMQ воркеры (`apps/worker`): consumer'ы для `serp`, `scrape`, `analyze`, `generate`, `pipeline`.
-2. Настроить Puppeteer pool, ограничение конкурентности и backoff.
-3. Инкапсулировать интеграции SerpApi и LLM в адаптеры (с retry, rate limit).
-4. Подключить pgcrypto для расшифровки API ключей, логирование прогресса задач.
+### Phase 4 - Worker Service
+1. Implement BullMQ workers (`apps/worker`): consumers for `serp`, `scrape`, `analyze`, `generate`, `pipeline`.
+2. Set up Puppeteer pool, concurrency limits, and backoff strategies.
+3. Encapsulate SerpApi and LLM integrations in adapters (with retry, rate limiting).
+4. Connect pgcrypto for API key decryption, implement job progress logging.
+5. Set up worker monitoring and alerting.
 
-### Фаза 5 — Переезд трафика
-1. На staging провести end-to-end тесты, замерить latency, проверить SLO.
-2. В production включить режим shadow-трафика (дублирование запросов) для API и воркеров.
-3. После успешного мониторинга переключить основной трафик на новые сервисы.
-4. В течение 1–2 недель держать монолит в режиме read-only, собирая метрики и логи.
-5. Отключить монолит, обновить документацию и runbooks.
+### Phase 5 - Traffic Migration
+1. Conduct end-to-end tests on staging, measure latency, verify SLO compliance.
+2. Enable shadow traffic mode in production (duplicate requests) for API and workers.
+3. After successful monitoring, switch main traffic to new services.
+4. Keep monolith in read-only mode for 1-2 weeks, collecting metrics and logs.
+5. Decommission monolith, update documentation and runbooks.
+6. Conduct post-migration review and optimization.
 
-## Риски и меры
-| Риск | Влияние | Митигирующие действия |
-|------|---------|-----------------------|
-| Несовпадение схем данных | Потеря данных | Автоматические тесты миграций, checksum сверки, ручная валидация ключевых таблиц. |
-| Ограничения внешних API | Задержки в задачах | Встроенный backoff, кеширование, fallback очереди. |
-| Нагрузка Puppeteer | Падение воркеров | Ограничение сессий, автоматический рестарт, мониторинг ресурсов. |
-| Секреты в открытом доступе | Компрометация данных | Использование Docker secrets/Vault, ревизия прав доступа. |
-| Наблюдаемость | Трудности расследования инцидентов | Стандартизованные логи, обязательные traceId/jobId, заранее подготовленные дашборды. |
+## Risks and Mitigations
 
-## План отката
-1. **API сервис**
-   - Переключить ingress/DNS обратно на монолит.
-   - Отключить постановку задач в новых очередях (pause BullMQ).
-   - Сохранить snapshot Redis для восстановления.
+| Risk | Impact | Mitigation Actions |
+|------|---------|-------------------|
+| Data schema mismatch | Data loss | Automated migration tests, checksum verification, manual validation of key tables. |
+| External API limitations | Task delays | Built-in backoff, caching, fallback queues. |
+| Puppeteer load | Worker crashes | Session limits, automatic restart, resource monitoring. |
+| Secrets exposure | Data compromise | Use Docker secrets/Vault, access rights audit. |
+| Observability gaps | Incident investigation difficulties | Standardized logs, mandatory traceId/jobId, prepared dashboards. |
+| Database migration failure | Service outage | Pre-migration backups, rollback procedures, migration dry-runs. |
+| Queue processing bottlenecks | Performance degradation | Horizontal scaling, queue monitoring, priority management. |
 
-2. **Worker сервис**
-   - Завершить текущие задачи, выгрузить логи.
-   - Активировать старые фоновые процессы в монолите (если оставлены).
+## Rollback Plan
 
-3. **База данных**
-   - Восстановить последнюю стабильную резервную копию PostgreSQL.
-   - При необходимости вернуться на SQLite (только после ручной оценки потерь).
+### 1. API Service
+- Switch ingress/DNS back to monolith.
+- Disable job queuing in new queues (pause BullMQ).
+- Save Redis snapshot for recovery.
+- Preserve new API logs for analysis.
 
-4. **Коммуникация**
-   - Уведомить заинтересованные стороны, зафиксировать инцидент и шаги отката в runbook.
+### 2. Worker Service
+- Complete current tasks, export logs.
+- Activate old background processes in monolith (if preserved).
+- Stop new worker instances.
 
-## Контрольные точки
-- ✔️ Утверждённые ADR и архитектурные документы.
-- ✔️ Применён initial миграционный пакет в PostgreSQL.
-- ✔️ Внедрён API с покрытием OpenAPI.
-- ✔️ Настроены очереди и worker-процессы с мониторингом.
-- ✔️ Подтверждена доступность (>=99.5%) на этапе shadow-трафика.
+### 3. Database
+- Restore last stable PostgreSQL backup.
+- If necessary, fallback to SQLite (only after manual loss assessment).
+- Validate data integrity after rollback.
 
-План подлежит актуализации по результатам разработки и пилотных запусков.
+### 4. Communication
+- Notify stakeholders, document incident and rollback steps in runbook.
+- Conduct post-mortem analysis.
+
+### 5. Monitoring
+- Ensure all monitoring and alerting is restored.
+- Verify service health after rollback.
+
+## Control Points
+- [x] Approved ADR and architectural documents.
+- [ ] Initial migration package applied to PostgreSQL.
+- [ ] API implemented with OpenAPI coverage.
+- [ ] Queues and worker processes configured with monitoring.
+- [ ] Availability (>=99.5%) confirmed during shadow traffic phase.
+- [ ] Performance benchmarks met or exceeded.
+- [ ] Security audit completed.
+- [ ] Documentation and runbooks updated.
+
+## Timeline Estimates
+- **Phase 0**: 1 week
+- **Phase 1**: 2 weeks
+- **Phase 2**: 3 weeks
+- **Phase 3**: 4 weeks
+- **Phase 4**: 3 weeks
+- **Phase 5**: 2 weeks
+- **Total**: ~15 weeks (3.5 months)
+
+## Success Criteria
+1. **Functional**: All existing features work in new architecture
+2. **Performance**: Response times <= 110% of monolith
+3. **Reliability**: 99.5% uptime during migration period
+4. **Data Integrity**: Zero data loss during migration
+5. **Observability**: Full visibility into system health and performance
+
+This plan will be updated based on development results and pilot launches.

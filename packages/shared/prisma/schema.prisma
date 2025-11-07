@@ -1,0 +1,225 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  username  String   @unique
+  role      Role     @default(USER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  jobs Job[]
+  apiKeys ApiKey[]
+  prompts Prompt[]
+
+  @@map("users")
+}
+
+model ApiKey {
+  id          String   @id @default(cuid())
+  provider    String
+  encryptedValue String // AES encrypted value
+  metadata    Json?    // Additional provider-specific data
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdBy   String
+  user        User     @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+
+  @@map("api_keys")
+}
+
+model Job {
+  id        String     @id @default(cuid())
+  type      JobType
+  payload   Json       // Job parameters
+  status    JobStatus  @default(PENDING)
+  priority  Int        @default(5)
+  progress  Int        @default(0)
+  total     Int?
+  message   String?
+  result    Json?
+  error     String?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  startedAt DateTime?
+  completedAt DateTime?
+  createdBy String?
+  user      User?      @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+
+  logs JobLog[]
+  serpApiResults SerpApiResult[]
+  pages Page[]
+
+  @@map("jobs")
+}
+
+model JobLog {
+  id        String   @id @default(cuid())
+  jobId     String
+  level     LogLevel
+  message   String
+  step      String?
+  metadata Json?
+  createdAt DateTime @default(now())
+  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, createdAt])
+  @@map("job_logs")
+}
+
+model SerpApiResult {
+  id       String   @id @default(cuid())
+  keyword  String
+  params   Json     // geo, lang, num, etc.
+  rawJson  Json     // Complete SerpApi response
+  hash     String   @unique // For deduplication
+  createdAt DateTime @default(now())
+  jobId    String
+  job      Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([keyword, createdAt])
+  @@map("serpapi_results")
+}
+
+model Page {
+  id          String   @id @default(cuid())
+  url         String   @unique
+  title       String?
+  description String?
+  content     String?
+  contentHash String   @unique // For deduplication
+  language    String?
+  fetchedAt   DateTime @default(now())
+  jobId       String
+  job         Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  headings Heading[]
+  embeddings Embedding[]
+
+  @@index([contentHash])
+  @@map("pages")
+}
+
+model Heading {
+  id       String  @id @default(cuid())
+  pageId   String
+  level    Int     // H1, H2, H3, etc.
+  text     String
+  order    Int
+  page     Page    @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  embeddings Embedding[]
+
+  @@index([pageId, level, order])
+  @@map("headings")
+}
+
+model Embedding {
+  id         String   @id @default(cuid())
+  textHash   String   // Hash of the original text for deduplication
+  vector     Float[]  // The embedding vector
+  model      String   // Model used for embedding (e.g., "text-embedding-ada-002")
+  metadata   Json?    // Model-specific metadata
+  createdAt  DateTime @default(now())
+  pageId     String?
+  headingId  String?
+  page       Page?    @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  heading    Heading? @relation(fields: [headingId], references: [id], onDelete: Cascade)
+
+  @@unique([textHash, model])
+  @@index([textHash])
+  @@map("embeddings")
+}
+
+model GeneratedText {
+  id            String   @id @default(cuid())
+  sectionType   String   // Type of content section
+  heading       String
+  content       String
+  keywordsUsed  String[] // Keywords that were used for generation
+  language      String
+  metrics       Json?    // Performance metrics, token usage, etc.
+  status        String   @default("draft")
+  version       Int      @default(1)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([sectionType, status])
+  @@map("generated_text")
+}
+
+model Prompt {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  body      String
+  version   Int      @default(1)
+  isActive  Boolean  @default(true)
+  updatedBy String
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [updatedBy], references: [id], onDelete: Cascade)
+
+  @@index([key, version])
+  @@map("prompts")
+}
+
+model TextAnalyticsCache {
+  id        String   @id @default(cuid())
+  cacheKey  String   @unique
+  data      Json     // Cached analytics data
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
+  @@map("text_analytics_cache")
+}
+
+model WordstatCache {
+  id        String   @id @default(cuid())
+  cacheKey  String   @unique
+  data      Json     // Cached wordstat data
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
+  @@map("wordstat_cache")
+}
+
+enum Role {
+  ADMIN
+  USER
+  VIEWER
+}
+
+enum JobType {
+  SERPAPI
+  SCRAPE
+  ANALYZE
+  GENERATE
+  PIPELINE
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum LogLevel {
+  DEBUG
+  INFO
+  WARN
+  ERROR
+}

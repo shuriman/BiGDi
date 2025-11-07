@@ -1,0 +1,37 @@
+{
+  "name": "zemo-modular",
+  "version": "1.0.0",
+  "description": "Zemo modular architecture with PostgreSQL and Redis",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build:shared && npm run build:api && npm run build:worker",
+    "build:shared": "npm run build --workspace=@zemo/shared",
+    "build:api": "npm run build --workspace=@zemo/api",
+    "build:worker": "npm run build --workspace=@zemo/worker",
+    "dev:api": "npm run start:dev --workspace=@zemo/api",
+    "dev:worker": "npm run start:dev --workspace=@zemo/worker",
+    "lint": "npm run lint --workspace=@zemo/shared && npm run lint --workspace=@zemo/api && npm run lint --workspace=@zemo/worker",
+    "test": "npm run test --workspace=@zemo/shared && npm run test --workspace=@zemo/api && npm run test --workspace=@zemo/worker",
+    "docker:build": "docker-compose -f infra/compose/docker-compose.yml build",
+    "docker:up": "docker-compose -f infra/compose/docker-compose.yml up -d",
+    "docker:down": "docker-compose -f infra/compose/docker-compose.yml down",
+    "docker:logs": "docker-compose -f infra/compose/docker-compose.yml logs -f",
+    "migrate": "npx prisma migrate dev --schema packages/shared/prisma/schema.prisma",
+    "migrate:deploy": "npx prisma migrate deploy --schema packages/shared/prisma/schema.prisma",
+    "migrate:generate": "npx prisma generate --schema packages/shared/prisma/schema.prisma"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.0",
+    "eslint": "^8.55.0",
+    "prettier": "^3.1.0"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  }
+}
